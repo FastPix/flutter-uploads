@@ -1,0 +1,28 @@
+name: flutter_uploads_sdk
+description: A robust Flutter package for uploading large video and audio files with advanced features like chunked uploads, pause/resume functionality, network resilience, comprehensive progress tracking, and detailed logging. Built for reliability and user experience.
+version: 0.0.1
+homepage: https://github.com/FastPix/flutter-uploads
+repository: https://github.com/FastPix/flutter-uploads
+issue_tracker: https://github.com/FastPix/flutter-uploads/issues
+documentation:
+
+environment:
+  sdk: ^3.7.2
+  flutter: ">=1.17.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.8.0+1
+  connectivity_plus: ^6.1.4
+  internet_connection_checker: ^3.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+# The following section is specific to Flutter packages.
+flutter:
+  # This package has no assets, fonts, or other Flutter-specific resources
+  # to include in the package. 
