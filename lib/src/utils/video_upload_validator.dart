@@ -1,8 +1,8 @@
 import 'dart:io';
 
-import 'package:flutter_uploads_sdk/src/core/video_upload_chunker.dart';
-import 'package:flutter_uploads_sdk/src/models/error.dart';
-import 'package:flutter_uploads_sdk/src/utils/constants.dart';
+import 'package:fastpix_uploads/src/core/video_upload_chunker.dart';
+import 'package:fastpix_uploads/src/models/error.dart';
+import 'package:fastpix_uploads/src/utils/constants.dart';
 
 
 

@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:flutter_uploads_sdk/flutter_uploads_sdk.dart';
+import 'package:fastpix_uploads/flutter_uploads_sdk.dart';
 
 class FlutterResumableUploads {
   CancelToken cancelToken = CancelToken();

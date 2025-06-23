@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_uploads_sdk/src/utils/logger.dart';
+import 'package:fastpix_uploads/src/utils/logger.dart';
 import 'package:internet_connection_checker/internet_connection_checker.dart';
 
 class NetworkHandler {

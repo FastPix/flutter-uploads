@@ -1,5 +1,5 @@
 
-import 'package:flutter_uploads_sdk/src/core/video_upload_builder.dart';
+import 'package:fastpix_uploads/src/core/video_upload_builder.dart';
 
 class ProgressModel {
   /// The current status of the upload process (e.g., uploading, paused, completed).
