@@ -1,7 +1,7 @@
 library flutter_uploads_sdk;
 
 // Main SDK class
-export 'src/flutter_uploads_sdk.dart' show FlutterResumableUploads;
+export 'src/fastpix_uploads.dart' show FlutterResumableUploads;
 
 // Core components
 export 'src/core/video_upload_builder.dart' show FlutterResumableUploadsBuilder;

@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:fastpix_uploads/src/models/error.dart';
 import 'package:fastpix_uploads/src/models/progress_model.dart';
 import 'package:fastpix_uploads/src/utils/logger.dart';
-import 'package:fastpix_uploads/src/flutter_uploads_sdk.dart';
+import 'package:fastpix_uploads/src/fastpix_uploads.dart';
 
 
 /// Type alias for progress callback
