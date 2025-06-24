@@ -1,8 +1,6 @@
 import 'dart:io';
 
-import 'package:fastpix_uploads/src/core/video_upload_chunker.dart';
-import 'package:fastpix_uploads/src/models/error.dart';
-import 'package:fastpix_uploads/src/utils/constants.dart';
+import 'package:fastpix_resumable_uploader/fastpix_resumable_uploader.dart';
 
 
 
