@@ -1,4 +1,4 @@
-name: fastpix_uploads
+name: fastpix_resumable_uploader
 description: A robust Flutter package for uploading large video and audio files with advanced features like chunked uploads, pause/resume functionality, network resilience, comprehensive progress tracking, and detailed logging. Built for reliability and user experience.
 version: 1.0.0
 homepage: https://www.fastpix.io/
@@ -21,6 +21,10 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+
+platforms:
+  android:
+  ios:
 
 # The following section is specific to Flutter packages.
 flutter:

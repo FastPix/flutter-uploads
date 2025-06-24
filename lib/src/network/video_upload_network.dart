@@ -43,7 +43,6 @@ class VideoUploadNetwork {
         ),
         cancelToken: cancelToken,
       );
-
       return response;
     } catch (error) {
       rethrow;
