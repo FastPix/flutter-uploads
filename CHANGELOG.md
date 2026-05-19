@@ -1,3 +1,11 @@
+## 1.0.1
+
+### 🔗 Documentation & Homepage URL Update
+
+- Updated `homepage` in `pubspec.yaml` from `https://www.fastpix.io/` to `https://www.fastpix.com/`.
+- Updated documentation links in `README.md` (Basic Authentication, Upload media from device) from `docs.fastpix.io` to `docs.fastpix.com`.
+- Updated documentation link in the GitHub issue template (`.github/ISSUE_TEMPLATE/question_support.md`) from `docs.fastpix.io` to `docs.fastpix.com`.
+
 ## 1.0.0
 
 ### 🎉 Initial Release - Flutter Resumable Uploads SDK

@@ -140,6 +140,6 @@ Before submitting, please ensure:
 **We'll do our best to help you get unstuck! 🚀**
 
 **For urgent issues, please also consider:**
-- [FastPix Documentation](https://docs.fastpix.io/)
+- [FastPix Documentation](https://docs.fastpix.com/)
 - [Stack Overflow](https://stackoverflow.com/questions/tagged/fastpix)
 - [GitHub Discussions](https://github.com/FastPix/web-uploads-sdk/discussions)
