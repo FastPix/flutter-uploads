@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:fastpix_resumable_uploader/fastpix_resumable_uploader.dart';
+
+import 'utils/lifecycle_observer.dart';
 
 class FlutterResumableUploads {
   CancelToken cancelToken = CancelToken();
@@ -11,10 +14,60 @@ class FlutterResumableUploads {
   // Video upload state model instance
   final VideoUploadState _state = VideoUploadState();
 
+  /// Per-upload progress dispatcher. Previously a process-wide singleton —
+  /// scoping it to the uploader instance fixes the bug where two
+  /// concurrent uploads in the same app would cross-wire callbacks.
+  final VideoUploadProgress _progress = VideoUploadProgress();
+
+  /// Per-upload retry controller, owns the pending retry timer so we can
+  /// cancel it deterministically on dispose/abort/reset. Routes terminal
+  /// failures back here so the in-flight `uploadVideo()` future rejects.
+  late final VideoUploadRetry _retry = VideoUploadRetry(
+    _progress,
+    onTerminalFailure: _rejectCompletion,
+  );
+
+  /// Resolved when the upload reaches a terminal state. Null while no
+  /// upload is in progress. Distinct per-call so awaiting `uploadVideo()`
+  /// returns the *current* attempt's outcome, not a stale one.
+  Completer<void>? _completionCompleter;
+
+  /// Terminal-failure flag. `isUploading()` honors this so a permanent
+  /// failure isn't reported as "still uploading".
+  bool _isTerminallyFailed = false;
+
+  /// Broadcast stream of progress events. Multiple listeners supported.
+  Stream<ProgressModel> get progressStream => _progress.progressStream;
+
+  /// Broadcast stream of error events.
+  Stream<UploadError> get errorStream => _progress.errorStream;
+
   // Callback properties
   PauseCallback? onPause;
   AbortCallback? onAbort;
   ErrorCallback? onError;
+
+  /// Optional: called when the signed URL appears to have expired. The
+  /// callback's return value replaces [_state.gcsSignedUrl] and the upload
+  /// resumes from the server's committed cursor.
+  SignedUrlRefreshCallback? onUrlRefresh;
+
+  /// Optional app-lifecycle observer that auto-pauses the upload when the
+  /// app goes to the background and resumes when it returns. Attached via
+  /// [enableAppLifecycleObserver] (also exposed on the builder).
+  UploadLifecycleObserver? _lifecycleObserver;
+
+  /// Attaches a [WidgetsBindingObserver] that auto-pauses on background
+  /// and auto-resumes on foreground. Idempotent.
+  void enableAppLifecycleObserver() {
+    _lifecycleObserver ??= UploadLifecycleObserver(this)..attach();
+  }
+
+  /// Removes the lifecycle observer if one is attached. Idempotent.
+  void disableAppLifecycleObserver() {
+    _lifecycleObserver?.detach();
+    _lifecycleObserver = null;
+  }
 
   // Builder configuration properties
   File? _builderFile;
@@ -23,7 +76,6 @@ class FlutterResumableUploads {
   int? _builderMaxFileSize;
   UploadProgressCallback? _builderOnProgress;
   ErrorCallback? _builderOnError;
-  int _builderMaxRetries = 5;
   Duration _builderRetryDelay = const Duration(milliseconds: 2000);
 
   /// Static method to create a builder for configuring uploads
@@ -48,22 +100,46 @@ class FlutterResumableUploads {
     _builderMaxFileSize = maxFileSize;
     _builderOnProgress = onProgress;
     _builderOnError = onError;
-    _builderMaxRetries = maxRetries;
     _builderRetryDelay = retryDelay;
 
-    // Set max retries in state
+    // maxRetries lives only on the state — the SDK's single source of
+    // truth for the retry policy. The retry controller reads it from there.
     _state.maxRetries = maxRetries;
   }
 
-  /// Upload video using builder configuration
+  /// Kicks off the upload and returns a [Future] that completes when the
+  /// upload reaches a terminal state:
+  ///
+  /// * `Future` resolves normally when the upload finalizes (any 2xx).
+  /// * `Future` resolves with an [UploadError] when the upload fails
+  ///   permanently — exhausted retries, 4xx, or aborted by the caller.
+  ///
+  /// Progress events stream through [progressStream] / `onProgress`.
+  /// Errors that are *recovered* (transient retries) flow only through the
+  /// error stream / callback — they do not reject the returned future.
   Future<void> uploadVideo() async {
     if (_builderFile == null || _builderSignedUrl == null) {
-      VideoUploadProgress.emitError(UploadError(
-          "Builder configuration not set. Use FlutterResumableUploadsBuilder to configure the upload."));
-      return;
+      final err = UploadError(
+          'Builder configuration not set. Use FlutterResumableUploadsBuilder '
+          'to configure the upload.');
+      _progress.emitError(err);
+      throw err;
     }
 
-    await _uploadVideoWithParams(
+    // Prepare a fresh completer for this attempt. Any pending one from a
+    // previous attempt should have been resolved already; if not, complete
+    // it with an error so old await-ers don't hang forever.
+    final stale = _completionCompleter;
+    if (stale != null && !stale.isCompleted) {
+      stale.completeError(
+        UploadError('Upload superseded by a new uploadVideo() call.'),
+      );
+    }
+    final completer = Completer<void>();
+    _completionCompleter = completer;
+    _isTerminallyFailed = false;
+
+    _uploadVideoWithParams(
       file: _builderFile!,
       signedUrl: _builderSignedUrl!,
       chunkSize: _builderChunkSize,
@@ -71,6 +147,23 @@ class FlutterResumableUploads {
       onProgress: _builderOnProgress,
       onError: _builderOnError,
     );
+
+    return completer.future;
+  }
+
+  /// Internal: resolve the in-flight `uploadVideo()` future successfully.
+  void _resolveCompletion() {
+    final c = _completionCompleter;
+    if (c != null && !c.isCompleted) c.complete();
+  }
+
+  /// Internal: reject the in-flight `uploadVideo()` future with [error].
+  /// Marks the uploader as terminally failed so `isUploading()` reports
+  /// false until the next `uploadVideo()` call.
+  void _rejectCompletion(UploadError error) {
+    _isTerminallyFailed = true;
+    final c = _completionCompleter;
+    if (c != null && !c.isCompleted) c.completeError(error);
   }
 
   /// Uploads a video file in chunks
@@ -89,12 +182,12 @@ class FlutterResumableUploads {
       isAborted: _state.isAborted,
     );
     if (serviceError != null) {
-      VideoUploadProgress.emitError(serviceError);
+      _progress.emitError(serviceError);
       return;
     }
 
     // Setup progress callbacks
-    VideoUploadProgress.setupCallbacks(
+    _progress.setupCallbacks(
       onProgress: onProgress ?? (progress) {},
       onError: onError ?? (error) {},
     );
@@ -107,13 +200,13 @@ class FlutterResumableUploads {
       maxFileSize: maxFileSize,
     );
     if (validationError != null) {
-      VideoUploadProgress.emitError(validationError);
+      _progress.emitError(validationError);
       return;
     }
 
     try {
       // Reset retry state for new upload
-      VideoUploadRetry.resetRetryState(_state);
+      _retry.resetRetryState(_state);
 
       // Enable network health checker
       _enableNetworkHealthChecker();
@@ -122,12 +215,12 @@ class FlutterResumableUploads {
       // Initialize upload state
       _initializeUploadState(file, signedUrl, chunkSize);
 
-      VideoUploadProgress.emitProgress(
+      _progress.emitProgress(
           VideoUploadProgress.statusToString(UploadStatus.uploadingChunks));
       // Start upload process
       _handleChunkStreaming();
     } catch (error) {
-      VideoUploadProgress.emitError(
+      _progress.emitError(
           UploadError("Error Uploading Video: $error"));
     }
   }
@@ -135,9 +228,9 @@ class FlutterResumableUploads {
   /// Initialize upload state with file and configuration
   void _initializeUploadState(File file, String signedUrl, int chunkSize) {
     // Ensure progress model is completely reset
-    VideoUploadProgress.reset();
+    _progress.reset();
 
-    VideoUploadProgress.emitProgress(
+    _progress.emitProgress(
         VideoUploadProgress.statusToString(UploadStatus.splittingChunks));
 
     _state.chunkSize = chunkSize;
@@ -163,7 +256,7 @@ class FlutterResumableUploads {
     );
 
     // Emit initial progress with total chunks information
-    VideoUploadProgress.emitProgress(
+    _progress.emitProgress(
         "Starting upload. Total chunks: ${_state.totalChunks}",
         totalChunks: _state.totalChunks,
         currentChunkIndex: 1,
@@ -195,7 +288,7 @@ class FlutterResumableUploads {
     if (VideoUploadRetry.hasChunkExceededMaxRetries(
         _state, currentChunkIndex)) {
       _state.releaseUploadLock();
-      VideoUploadProgress.emitError(
+      _progress.emitError(
           UploadError('Upload failed after ${_state.maxRetries} attempts. '
               'Chunk $currentChunkIndex could not be uploaded.'));
       return;
@@ -208,6 +301,17 @@ class FlutterResumableUploads {
 
     try {
       final start = _state.nextChunkRangeStart;
+
+      // Empty-trailing-chunk guard: if we've sent every byte locally but
+      // never received a terminal 2xx, ask the server for its truth before
+      // assuming we're done or trying to PUT a zero-byte range (which would
+      // produce an inverted Content-Range).
+      if (start >= _state.fileLength) {
+        _state.releaseUploadLock();
+        await _verifyCompletionFromServer(currentChunkIndex);
+        return;
+      }
+
       final end = VideoUploadChunker.getChunkEnd(
           start, _state.chunkSize, _state.fileLength);
 
@@ -227,7 +331,7 @@ class FlutterResumableUploads {
         progress: ((_state.successiveChunkCount / _state.totalChunks) * 100),
       );
 
-      final response = await VideoUploadNetwork.uploadChunk(
+      final result = await VideoUploadNetwork.uploadChunk(
         signedUrl: _state.gcsSignedUrl ?? '',
         chunkBytes: chunkToBeUploaded,
         start: start,
@@ -235,81 +339,117 @@ class FlutterResumableUploads {
         fileLength: _state.fileLength,
         cancelToken: cancelToken,
         onProgress: (progress) {
-          VideoUploadProgress.emitProgress(
+          _progress.emitProgress(
               "Uploading: ${progress.toStringAsFixed(1)}%",
               uploadPercentage: progress);
         },
       );
 
-      if (response?.statusCode == 308) {
-        // Success - move to next chunk
-        _state.chunkCount++;
-        _state.successiveChunkCount++;
-        _state.chunkOffset++;
-        _state.nextChunkRangeStart = end;
+      switch (result.outcome) {
+        case ChunkUploadOutcome.incomplete:
+          // GCS told us exactly how much it actually committed via the
+          // `Range:` response header. Trust it — never assume we got all
+          // [start..end] in. Partial commits are real on flaky links.
+          final serverNext = result.serverNextOffset ?? 0;
 
-        // Reset retry count for this chunk since it succeeded
-        VideoUploadRetry.resetChunkRetryCount(_state, currentChunkIndex);
+          // Server should never claim more than what we just sent.
+          if (serverNext > end) {
+            _state.releaseUploadLock();
+            _progress.emitError(UploadError(
+                'Server cursor ($serverNext) is ahead of bytes we sent '
+                '($end). Aborting to avoid data corruption.'));
+            return;
+          }
 
-        // Release lock before continuing with next chunk
-        _state.releaseUploadLock();
+          if (serverNext < end) {
+            SDKLogger.warning(
+                'Partial commit on chunk $currentChunkIndex: sent '
+                '$start-${end - 1} but server committed only through '
+                '${serverNext - 1}. Resuming from $serverNext.');
+          }
 
-        // Log successful chunk upload
-        SDKLogger.debug('Chunk $currentChunkIndex uploaded successfully');
+          _state.nextChunkRangeStart = serverNext;
+          _recomputeChunkCountersFromCursor();
 
-        // Emit progress with updated chunk information
-        VideoUploadProgress.emitProgress(
-            "Chunk $currentChunkIndex completed. Starting chunk ${currentChunkIndex + 1}/${_state.totalChunks}",
-            currentChunkIndex: currentChunkIndex + 1,
-            totalChunks: _state.totalChunks);
+          // Reset retry count for this chunk if we fully cleared it.
+          if (serverNext >= end) {
+            VideoUploadRetry.resetChunkRetryCount(_state, currentChunkIndex);
+          }
 
-        // Continue with next chunk
-        _handleChunkStreaming();
-      } else if (response?.statusCode == 200) {
-        // Final chunk uploaded successfully
-        _state.releaseUploadLock();
-        VideoUploadProgress.progressModel.isCompleted = true;
-        _state.isCompleted = true;
+          _state.releaseUploadLock();
 
-        // Log upload completion
-        SDKLogger.logUploadCompletion(
-          totalChunks: _state.totalChunks,
-          totalBytes: _state.fileLength,
-          duration: Duration.zero, // TODO: Track actual duration
-        );
+          SDKLogger.debug(
+              'Chunk $currentChunkIndex committed to $serverNext / '
+              '${_state.fileLength}');
 
-        // Log final chunk retry statistics
-        SDKLogger.logChunkRetryStatistics(
-          chunkRetryCount: _state.chunkRetryCount,
-          totalChunks: _state.totalChunks,
-          maxRetries: _state.maxRetries,
-        );
+          _progress.emitProgress(
+              "Chunk $currentChunkIndex committed. Starting chunk "
+              "${_state.successiveChunkCount + 1}/${_state.totalChunks}",
+              currentChunkIndex: _state.successiveChunkCount + 1,
+              totalChunks: _state.totalChunks);
 
-        VideoUploadProgress.emitProgress(
-            VideoUploadProgress.statusToString(UploadStatus.completed),
-            currentChunkIndex: _state.totalChunks,
+          // Continue with next chunk
+          _handleChunkStreaming();
+          break;
+
+        case ChunkUploadOutcome.completed:
+          _state.releaseUploadLock();
+          _markCompleted();
+          break;
+
+        case ChunkUploadOutcome.transientFailure:
+          _state.releaseUploadLock();
+          SDKLogger.warning(
+              'Transient HTTP ${result.statusCode} for chunk $currentChunkIndex');
+
+          SDKLogger.logChunkRetryStatistics(
+            chunkRetryCount: _state.chunkRetryCount,
             totalChunks: _state.totalChunks,
-            uploadPercentage: 100.0);
-        VideoUploadRetry.resetRetryState(_state);
-      } else {
-        _state.releaseUploadLock();
-        SDKLogger.warning(
-            'HTTP Error: ${response?.statusCode} for chunk $currentChunkIndex');
+            maxRetries: _state.maxRetries,
+          );
 
-        // Log chunk retry statistics before attempting retry
-        SDKLogger.logChunkRetryStatistics(
-          chunkRetryCount: _state.chunkRetryCount,
-          totalChunks: _state.totalChunks,
-          maxRetries: _state.maxRetries,
-        );
+          // Before retrying, re-sync the cursor from the server. The chunk
+          // may have been partially committed before the error response.
+          await _resyncCursorFromServer();
 
-        VideoUploadRetry.handleChunkUploadFailure(
-          state: _state,
-          errorMessage: 'HTTP Error: ${response?.statusCode}',
-          retryDelay: _builderRetryDelay,
-          retryCallback: _handleChunkStreaming,
-          chunkIndex: currentChunkIndex,
-        );
+          _retry.handleChunkUploadFailure(
+            state: _state,
+            errorMessage:
+                result.errorMessage ?? 'HTTP ${result.statusCode}',
+            retryDelay: _builderRetryDelay,
+            retryCallback: _handleChunkStreaming,
+            chunkIndex: currentChunkIndex,
+          );
+          break;
+
+        case ChunkUploadOutcome.permanentFailure:
+          _state.releaseUploadLock();
+
+          // Signed-URL-expiry path: GCS returns 403 (or sometimes 410)
+          // when a resumable session URL has expired. If the caller has
+          // wired up onUrlRefresh, give them one chance to mint a new URL
+          // and resume from the server's committed cursor.
+          if (_isLikelyUrlExpiry(result.statusCode) &&
+              onUrlRefresh != null) {
+            SDKLogger.warning(
+                'Signed URL appears expired (HTTP ${result.statusCode}). '
+                'Requesting fresh URL via onUrlRefresh.');
+            final refreshed = await _tryRefreshSignedUrl();
+            if (refreshed) {
+              _handleChunkStreaming();
+              break;
+            }
+          }
+
+          SDKLogger.error(
+              'Permanent failure on chunk $currentChunkIndex: '
+              '${result.errorMessage}');
+          final permErr = UploadError(
+              'Upload failed permanently: ${result.errorMessage}. '
+              'This is not retryable (HTTP ${result.statusCode}).');
+          _progress.emitError(permErr);
+          _rejectCompletion(permErr);
+          break;
       }
     } on DioException catch (ex) {
       _state.releaseUploadLock();
@@ -322,7 +462,7 @@ class FlutterResumableUploads {
         maxRetries: _state.maxRetries,
       );
 
-      VideoUploadRetry.handleDioException(
+      _retry.handleDioException(
         exception: ex,
         state: _state,
         cancelToken: cancelToken,
@@ -343,7 +483,7 @@ class FlutterResumableUploads {
         maxRetries: _state.maxRetries,
       );
 
-      VideoUploadRetry.handleChunkUploadFailure(
+      _retry.handleChunkUploadFailure(
         state: _state,
         errorMessage: 'General Error: $error',
         retryDelay: _builderRetryDelay,
@@ -353,20 +493,172 @@ class FlutterResumableUploads {
     }
   }
 
-  /// Enable network health checker
+  /// Recomputes chunk progress counters from the current cursor. Called
+  /// whenever [_state.nextChunkRangeStart] is updated to a server-reported
+  /// value, which may not align with chunk boundaries (partial commits).
+  void _recomputeChunkCountersFromCursor() {
+    if (_state.chunkSize <= 0) return;
+    final committedChunks = _state.nextChunkRangeStart ~/ _state.chunkSize;
+    _state.successiveChunkCount = committedChunks;
+    _state.chunkCount = committedChunks;
+    _state.chunkOffset = committedChunks;
+  }
+
+  /// Marks the upload as completed, emits the final progress event, and
+  /// resolves the `uploadVideo()` future.
+  void _markCompleted() {
+    _progress.progressModel.isCompleted = true;
+    _state.isCompleted = true;
+    _state.nextChunkRangeStart = _state.fileLength;
+    _state.successiveChunkCount = _state.totalChunks;
+
+    SDKLogger.logUploadCompletion(
+      totalChunks: _state.totalChunks,
+      totalBytes: _state.fileLength,
+      duration: Duration.zero,
+    );
+
+    SDKLogger.logChunkRetryStatistics(
+      chunkRetryCount: _state.chunkRetryCount,
+      totalChunks: _state.totalChunks,
+      maxRetries: _state.maxRetries,
+    );
+
+    _progress.emitProgress(
+        VideoUploadProgress.statusToString(UploadStatus.completed),
+        currentChunkIndex: _state.totalChunks,
+        totalChunks: _state.totalChunks,
+        uploadPercentage: 100.0);
+    _retry.resetRetryState(_state);
+    _resolveCompletion();
+  }
+
+  /// Issues a GCS `Content-Range: bytes */<total>` status query and updates
+  /// the local cursor to whatever the server reports. Best-effort: if the
+  /// query itself fails (no network, etc.) we fall through and let the
+  /// retry policy handle it — the next upload PUT will still use the old
+  /// cursor, which is no worse than the pre-fix behavior.
+  Future<void> _resyncCursorFromServer() async {
+    final url = _state.gcsSignedUrl;
+    if (url == null || url.isEmpty || _state.fileLength <= 0) return;
+
+    try {
+      final token = cancelToken.isCancelled ? CancelToken() : cancelToken;
+      final r = await VideoUploadNetwork.queryUploadStatus(
+        signedUrl: url,
+        fileLength: _state.fileLength,
+        cancelToken: token,
+      );
+
+      switch (r.outcome) {
+        case ChunkUploadOutcome.completed:
+          SDKLogger.info('Resync: server reports session already completed');
+          _markCompleted();
+          break;
+        case ChunkUploadOutcome.incomplete:
+          final serverNext = r.serverNextOffset ?? 0;
+          if (serverNext != _state.nextChunkRangeStart) {
+            SDKLogger.info(
+                'Resync: cursor moved from ${_state.nextChunkRangeStart} '
+                'to $serverNext');
+            _state.nextChunkRangeStart = serverNext;
+            _recomputeChunkCountersFromCursor();
+          }
+          break;
+        case ChunkUploadOutcome.permanentFailure:
+          // Session is dead (e.g. signed URL expired). Surface and bail.
+          _progress.emitError(UploadError(
+              'Resumable session is no longer valid: '
+              '${r.errorMessage}. A fresh signed URL is required.'));
+          break;
+        case ChunkUploadOutcome.transientFailure:
+          // Will be retried by the normal retry path.
+          break;
+      }
+    } catch (e) {
+      SDKLogger.warning('Resync query failed (best-effort): $e');
+    }
+  }
+
+  /// Returns true for the HTTP statuses that typically indicate the signed
+  /// URL has expired and a fresh one is required. We treat 401/403/410 the
+  /// same way: they're permanent against the *current* URL but recoverable
+  /// against a freshly-minted one.
+  bool _isLikelyUrlExpiry(int? status) {
+    return status == 401 || status == 403 || status == 410;
+  }
+
+  /// Invokes the user-supplied [onUrlRefresh] callback, swaps in the new
+  /// URL, and re-syncs the cursor from the server. Returns true on success.
+  Future<bool> _tryRefreshSignedUrl() async {
+    final cb = onUrlRefresh;
+    if (cb == null) return false;
+    try {
+      final fresh = await cb();
+      if (fresh.isEmpty) {
+        SDKLogger.error('onUrlRefresh returned an empty URL');
+        return false;
+      }
+      _state.gcsSignedUrl = fresh;
+      SDKLogger.info('Signed URL refreshed; resyncing cursor against server.');
+      await _resyncCursorFromServer();
+      return !_state.isAborted && !_isTerminallyFailed;
+    } catch (e) {
+      SDKLogger.error('onUrlRefresh threw: $e');
+      return false;
+    }
+  }
+
+  /// Public API: replace the in-flight signed URL with [newUrl] (for
+  /// callers that want to refresh proactively rather than waiting for an
+  /// expiry response). Re-syncs the cursor from the server against the new
+  /// URL before the next chunk is sent.
+  Future<void> refreshSignedUrl(String newUrl) async {
+    if (_isDisposed) return;
+    if (newUrl.isEmpty) {
+      _progress.emitError(UploadError('refreshSignedUrl: empty URL'));
+      return;
+    }
+    _state.gcsSignedUrl = newUrl;
+    await _resyncCursorFromServer();
+  }
+
+  /// Verifies completion when the local cursor reaches EOF but no terminal
+  /// 2xx has been seen. Either marks completed (if the server agrees) or
+  /// rewinds the cursor to whatever the server actually has.
+  Future<void> _verifyCompletionFromServer(int currentChunkIndex) async {
+    SDKLogger.info(
+        'Cursor at EOF (${_state.nextChunkRangeStart} / '
+        '${_state.fileLength}) without terminal 2xx — querying status');
+    await _resyncCursorFromServer();
+    if (_state.isCompleted) return;
+    // Server says there are still bytes outstanding — continue uploading
+    // from the corrected cursor.
+    if (_state.nextChunkRangeStart < _state.fileLength) {
+      _handleChunkStreaming();
+    }
+  }
+
+  /// Enable network health checker.
+  ///
+  /// Previously the first connectivity event was swallowed with a "first
+  /// time" flag — meaning if the user kicked off an upload while offline,
+  /// the SDK could miss the subsequent recovery event. Now every event
+  /// flows through the same restored/lost handler; the boolean is only
+  /// used to skip the redundant "Network restored" log on first start.
   void _enableNetworkHealthChecker() {
     _networkHandler.startMonitoring(onChange: (isOnline) {
       SDKLogger.logNetworkStatus(isOnline);
 
-      // Handle first-time initialization
-      if (_state.isFirstTime) {
-        _state.isFirstTime = false;
-        _state.isOffline = !isOnline;
-        return;
-      }
+      final wasFirst = _state.isFirstTime;
+      _state.isFirstTime = false;
 
       if (isOnline) {
-        _handleNetworkRestored();
+        // On the very first event we mark online but don't trigger a
+        // resume — there's nothing to resume yet, the upload may not have
+        // even started. Subsequent events do trigger resume.
+        _state.isOffline = false;
+        if (!wasFirst) _handleNetworkRestored();
       } else {
         _handleNetworkLost();
       }
@@ -390,7 +682,7 @@ class FlutterResumableUploads {
         return;
       }
 
-      VideoUploadProgress.emitProgress('Network restored. Resuming upload...');
+      _progress.emitProgress('Network restored. Resuming upload...');
 
       // Add a small delay to ensure network is stable
       Future.delayed(const Duration(milliseconds: 500), () {
@@ -408,7 +700,7 @@ class FlutterResumableUploads {
   void _handleNetworkLost() {
     SDKLogger.info('Network lost');
 
-    VideoUploadProgress.emitProgress(
+    _progress.emitProgress(
         VideoUploadProgress.statusToString(UploadStatus.connectionLost));
     _state.isOffline = true;
 
@@ -471,7 +763,7 @@ class FlutterResumableUploads {
       // Release upload lock when pausing
       _state.releaseUploadLock();
 
-      VideoUploadProgress.emitProgress(
+      _progress.emitProgress(
           VideoUploadProgress.statusToString(UploadStatus.paused));
       onPause?.call();
     }
@@ -486,27 +778,44 @@ class FlutterResumableUploads {
     }
     if (!_state.isAborted) {
       SDKLogger.info('Upload aborted by user');
-      VideoUploadProgress.emitProgress(
+      _progress.emitProgress(
           VideoUploadProgress.statusToString(UploadStatus.abort));
       _state.isAborted = true;
 
+      // Cancel any pending retry timer scheduled by the retry policy —
+      // otherwise it would fire after reset() and poke the new state.
+      _retry.cancelPendingRetry();
+
       // Release upload lock when aborting
       _state.releaseUploadLock();
+
+      // Reject the in-flight uploadVideo() future before reset() nukes the
+      // completer reference.
+      _rejectCompletion(UploadError('Upload aborted by user.'));
 
       reset();
       onAbort?.call();
     }
   }
 
-  /// Check if upload is paused
+  /// Whether the upload is currently paused.
   bool isPause() => _state.isPaused;
 
-  /// Check if upload is in progress
+  /// Whether an upload session is alive — initialized, not finalized, not
+  /// aborted, and not in a terminal-failure state. A paused upload still
+  /// returns `true` here because the session is recoverable via
+  /// [resumeUpload]. For "bytes are flowing right now", use
+  /// [isCurrentlyUploading].
   bool isUploading() {
-    return !_state.isCompleted && !_state.isAborted && _state.isInitialized;
+    return _state.isInitialized &&
+        !_state.isCompleted &&
+        !_state.isAborted &&
+        !_isTerminallyFailed;
   }
 
-  /// Check if upload is currently actively uploading (lock is acquired)
+  /// Whether bytes are actively being transmitted at this instant. False
+  /// during pause, during retry backoff, and while offline — even though
+  /// the session may still be alive (see [isUploading]).
   bool isCurrentlyUploading() {
     return _state.isUploading;
   }
@@ -533,15 +842,19 @@ class FlutterResumableUploads {
 
   /// Clean up resources when the upload service is no longer needed
   void dispose() {
+    disableAppLifecycleObserver();
     _networkHandler.dispose();
     if (!cancelToken.isCancelled) {
       cancelToken.cancel();
     }
 
+    // Cancel any pending retry timer so it can't fire after dispose.
+    _retry.cancelPendingRetry();
+
     // Release upload lock when disposing
     _state.releaseUploadLock();
 
-    VideoUploadProgress.dispose();
+    _progress.dispose();
     _isDisposed = true;
   }
 
@@ -559,10 +872,10 @@ class FlutterResumableUploads {
 
     // Clear all state
     _state.clearAll();
-    VideoUploadProgress.reset();
+    _progress.reset();
 
     // Reset retry state
-    VideoUploadRetry.resetRetryState(_state);
+    _retry.resetRetryState(_state);
 
     // Clear builder configuration
     _builderFile = null;
@@ -571,8 +884,11 @@ class FlutterResumableUploads {
     _builderMaxFileSize = null;
     _builderOnProgress = null;
     _builderOnError = null;
-    _builderMaxRetries = 5;
     _builderRetryDelay = const Duration(milliseconds: 2000);
+
+    // Drop the completer so the next uploadVideo() starts a fresh one.
+    _completionCompleter = null;
+    _isTerminallyFailed = false;
 
     // Clear callbacks (optional - developer can set them again)
     onPause = null;

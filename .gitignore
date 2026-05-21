@@ -5,154 +5,76 @@
 *.swp
 .DS_Store
 .atom/
+.build/
 .buildlog/
 .history
 .svn/
+.swiftpm/
 migrate_working_dir/
 
-# IntelliJ related
+# IntelliJ / Android Studio
 *.iml
 *.ipr
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
+# VS Code (uncomment if you don't want to share workspace settings)
 #.vscode/
 
-# Flutter/Dart/Pub related
+# Flutter / Dart / Pub
 # Libraries should not include pubspec.lock, per https://dart.dev/guides/libraries/private-files#pubspeclock.
-/pubspec.lock
+pubspec.lock
 **/doc/api/
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
+.packages
 build/
+.pub-cache/
+.pub/
+**/generated_plugin_registrant.dart
 
-# Flutter/Dart specific
-*.dart_tool/
-*.packages
-*.pub-cache/
-*.pub/
-*.flutter-plugins
-*.flutter-plugins-dependencies
-*.generated_plugin_registrant.dart
-
-# Symbols
+# Symbolication / obfuscation
 app.*.symbols
-
-# Exceptions to above rules.
-!**/ios/**/default.mode1v3
-!**/ios/**/default.mode2v3
-!**/ios/**/default.pbxuser
-!**/ios/**/default.perspectivev3
-!/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
+app.*.map.json
 
 # FVM (Flutter Version Management)
 .fvm/
 
-# Environment files
+# Coverage
+coverage/
+*.lcov
+
+# Environment / secrets
 .env
-.env.local
-.env.development
-.env.test
-.env.production
-
-# IDE specific files
-.vscode/settings.json
-.vscode/launch.json
-.vscode/tasks.json
-.vscode/extensions.json
-
-# Temporary files
-*.tmp
-*.temp
-*.swp
-*.swo
-*~
+.env.*
+*.pem
+*.key
 
 # OS generated files
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Temporary files
+*.tmp
+*.temp
+*.swo
+*~
 
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# nyc test coverage
-.nyc_output
-
-# Dependency directories
-node_modules/
-jspm_packages/
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Microbundle cache
-.rpt2_cache/
-.rts2_cache_cjs/
-.rts2_cache_es/
-.rts2_cache_umd/
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# parcel-bundler cache (https://parceljs.org/)
-.cache
-.parcel-cache
-
-# next.js build output
-.next
-
-# nuxt.js build output
-.nuxt
-
-# vuepress build output
-.vuepress/dist
-
-# Serverless directories
-.serverless
-
-# FuseBox cache
-.fusebox/
-
-# DynamoDB Local files
-.dynamodb/
-
-# TernJS port file
-.tern-port
-
-# Stores VSCode versions used for testing VSCode extensions
-.vscode-test
-
-# yarn v2
-.yarn/cache
-.yarn/unplugged
-.yarn/build-state.yml
-.yarn/install-state.gz
-.pnp.*
+# Example app build outputs (kept out of the published package)
+example/.dart_tool/
+example/.flutter-plugins
+example/.flutter-plugins-dependencies
+example/build/
+example/pubspec.lock
+example/ios/Flutter/.last_build_id
+example/ios/Pods/
+example/ios/.symlinks/
+example/android/.gradle/
+example/android/app/debug/
+example/android/app/profile/
+example/android/app/release/
+example/android/local.properties
+example/android/key.properties
+example/*.iml

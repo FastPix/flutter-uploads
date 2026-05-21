@@ -1,0 +1,33 @@
+name: fastpix_resumable_uploader_example
+description: "Example app showing how to upload videos to FastPix using the fastpix_resumable_uploader Flutter SDK on Android and iOS."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # The plugin under test — consumed via a path dependency so changes
+  # to the library show up in the example without re-publishing.
+  fastpix_resumable_uploader:
+    path: ../
+
+  # Pick a video from the device gallery / file system.
+  image_picker: ^1.1.2
+
+  # Talk to the FastPix Direct Upload API to mint a signed URL.
+  http: ^1.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

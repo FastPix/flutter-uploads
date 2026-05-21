@@ -15,6 +15,13 @@ typedef PauseCallback = void Function();
 /// Type alias for abort callback
 typedef AbortCallback = void Function();
 
+/// Asynchronous callback the SDK invokes when it detects the signed URL has
+/// expired (typically a 403/410 from GCS). The caller is expected to mint a
+/// fresh signed URL (usually by hitting their backend) and return it. The
+/// SDK then resumes the upload against the new URL from the server's
+/// committed cursor.
+typedef SignedUrlRefreshCallback = Future<String> Function();
+
 /// Builder class for configuring FlutterResumableUploads
 class FlutterResumableUploadsBuilder {
   File? _file;
@@ -25,8 +32,14 @@ class FlutterResumableUploadsBuilder {
   ErrorCallback? _onError;
   PauseCallback? _onPause;
   AbortCallback? _onAbort;
-  int _maxRetries = 3;
+  SignedUrlRefreshCallback? _onUrlRefresh;
+  // Default kept in sync with FlutterResumableUploads.configureParams.
+  int _maxRetries = 5;
   Duration _retryDelay = const Duration(milliseconds: 2000);
+
+  /// Whether to attach a Flutter `WidgetsBindingObserver` that auto-pauses
+  /// the upload on app backgrounding and auto-resumes on foreground.
+  bool _observeAppLifecycle = false;
 
   // Logging parameters
   bool _enableLogging = false;
@@ -81,6 +94,18 @@ class FlutterResumableUploadsBuilder {
     return this;
   }
 
+  /// Register a callback the SDK will invoke when the signed URL appears
+  /// to have expired (HTTP 403 / 410). Return a freshly-minted URL for the
+  /// *same* GCS resumable session; the upload resumes from the server's
+  /// committed cursor against the new URL.
+  ///
+  /// If unset, an expired-URL response surfaces as a permanent failure.
+  FlutterResumableUploadsBuilder onUrlRefresh(
+      SignedUrlRefreshCallback callback) {
+    _onUrlRefresh = callback;
+    return this;
+  }
+
   /// Set the maximum number of retry attempts
   FlutterResumableUploadsBuilder maxRetries(int maxRetries) {
     _maxRetries = maxRetries;
@@ -90,6 +115,18 @@ class FlutterResumableUploadsBuilder {
   /// Set the retry delay duration
   FlutterResumableUploadsBuilder retryDelay(Duration retryDelay) {
     _retryDelay = retryDelay;
+    return this;
+  }
+
+  /// When enabled, the SDK attaches a `WidgetsBindingObserver` and
+  /// auto-pauses the upload when the app is backgrounded (and auto-resumes
+  /// on foreground). This does NOT enable true background uploads — it
+  /// just leaves the resumable session in a clean state for when the app
+  /// returns. Off by default; opt in for a better UX on flaky mobile
+  /// foregrounding.
+  FlutterResumableUploadsBuilder observeAppLifecycle(
+      [bool enabled = true]) {
+    _observeAppLifecycle = enabled;
     return this;
   }
 
@@ -136,6 +173,11 @@ class FlutterResumableUploadsBuilder {
     uploadService.onPause = _onPause;
     uploadService.onAbort = _onAbort;
     uploadService.onError = _onError;
+    uploadService.onUrlRefresh = _onUrlRefresh;
+
+    if (_observeAppLifecycle) {
+      uploadService.enableAppLifecycleObserver();
+    }
 
     // Configure the upload service with builder parameters
     uploadService.configureParams(

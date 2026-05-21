@@ -183,6 +183,22 @@ class UploadService {
 }
 ```
 
+## 📱 Example App
+
+A complete, runnable example app for **Android** and **iOS** lives in
+[`example/`](example/). It picks a video from the device gallery, mints a signed
+URL from the FastPix Direct Upload API, then uploads with progress / pause /
+resume / abort wired up to the UI.
+
+```bash
+cd example
+flutter pub get
+flutter run            # pick an Android or iOS device
+```
+
+See [`example/README.md`](example/README.md) for credentials setup and a
+file-by-file tour.
+
 ## 📖 Usage
 
 ### Basic Usage with Builder Pattern

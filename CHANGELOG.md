@@ -1,3 +1,127 @@
+## 2.0.0
+
+### 🚨 Spec correctness — GCS resumable protocol compliance
+
+- **Parse the `Range:` response header on 308 responses.** The client now
+  resyncs its cursor to the byte offset GCS actually committed instead of
+  blindly advancing to the end of the chunk it sent. Fixes silent data
+  corruption on flaky networks where the server partially commits a chunk
+  before returning 308.
+- **Status-query path (`Content-Range: bytes */<total>`).** After any
+  transient failure / timeout / network loss / signed-URL refresh, the SDK
+  now asks GCS for its true cursor before re-uploading. Available as
+  `_resyncCursorFromServer()` internally and via `refreshSignedUrl(...)`
+  publicly.
+- **Any 2xx is now terminal success.** Previously only HTTP 200 finalized
+  the upload; 201 / 204 fell through to the retry path.
+- **Empty trailing chunk guard.** When the local cursor reaches EOF but no
+  terminal 2xx has been observed, the SDK queries the server rather than
+  PUT-ing a zero-byte (and inverted-Range) request.
+
+### 🔁 Retry policy
+
+- **Real exponential backoff with jitter.** `2s, 4s, 8s, 16s, 30s (cap)`
+  with ±25% jitter. Previously linear (`2s, 4s, 6s…`) with no jitter —
+  no longer prone to thundering-herd on shared-backend incidents.
+- **HTTP-status-aware retry classification.** 4xx (other than 408/429) is
+  no longer retried. 408/429/5xx are retried; everything else surfaces as
+  a permanent failure.
+- **Stop swallowing timeouts and `DioExceptionType.unknown`.** Connection
+  errors, send/receive timeouts, and unknown transport faults are now
+  classified as transient and routed through the retry path.
+- **Retry timers are tracked and cancelled** on `dispose()`, `abortUpload()`,
+  and `reset()`. Stray retry callbacks no longer fire into stale state.
+- **`DioExceptionType.badCertificate`** is treated as permanent (cert
+  pinning / MITM situations should not be retried).
+
+### 🧠 Concurrency / state
+
+- **Pause and abort no longer surface through the error stream.**
+  Previously the SDK emitted `UploadError('Upload Paused')` and
+  `UploadError('Upload Aborted')` via `onError`, which led consumers to
+  treat user-initiated pause as a failure (and disable the Resume button).
+  Pause and abort are now communicated only through the dedicated
+  `onPause` / `onAbort` callbacks and the progress event with the
+  appropriate `UploadStatus`.
+- **De-singletoned `VideoUploadProgress`.** Was a process-wide static class
+  whose callbacks were overwritten by every new uploader — two concurrent
+  uploads in the same app would cross-wire their callbacks. Now per-instance.
+- **De-singletoned `VideoUploadRetry`.** Per-instance retry controller
+  owns its own pending timer.
+- **First-network-event swallow fixed.** The `_isFirstTime` flag no
+  longer drops the first connectivity event, so an upload kicked off while
+  offline can be auto-resumed when the network returns.
+
+### 📐 API surface (breaking changes — see "Migration" below)
+
+- **`uploadVideo()` now returns a `Future<void>` that actually resolves
+  when the upload finalizes** (or rejects with `UploadError` on permanent
+  failure / abort). Previously the future resolved immediately after the
+  first chunk was scheduled.
+- **`progressStream` and `errorStream`** — broadcast streams on the
+  uploader for callers that want more than one listener or prefer streams
+  over callbacks. The legacy `onProgress` / `onError` callbacks still work.
+- **`isUploading()` now honors terminal failure state** — returns false
+  after a permanent failure instead of staying true forever.
+- **`onUrlRefresh: Future<String> Function()`** — builder hook called
+  automatically when the SDK detects an expired signed URL (HTTP
+  401 / 403 / 410). Mint a fresh URL and the upload resumes from the
+  server's committed cursor against the new URL.
+- **`refreshSignedUrl(String)`** — manual / proactive URL replacement on
+  the uploader.
+- **`.observeAppLifecycle()`** — opt-in builder flag. Attaches a
+  `WidgetsBindingObserver` that auto-pauses on background and resumes
+  on foreground. Does NOT enable true background uploads (that needs
+  platform-level integration), but leaves the resumable session in a
+  clean state for when the user returns.
+- Builder default `maxRetries` reconciled with the uploader default (both
+  now 5). Removed the dead `_builderMaxRetries` field.
+
+### 🧠 Memory / performance
+
+- **Killed the double-copy in `VideoUploadChunker.readFileChunk`.**
+  `Uint8List.fromList(raf.read(...))` is replaced with the direct
+  `raf.read(...)` return — saves a 16 MB copy per chunk.
+- **`Uint8List.sublistView` in the progress stream** in place of
+  `sublist`. For a 4 GB upload that's ~1M fewer heap allocations.
+
+### ✅ Tests
+
+- 32 unit tests covering chunker math, file-chunk read edge cases,
+  exponential-backoff math (doubling, cap, jitter bounds, never-negative),
+  GCS `Range:` header parsing, and HTTP-status classification
+  (200 / 201 / 204 / 308 / 308-with-Range / 400 / 403 / 408 / 429 / 500).
+
+### Migration from 1.x
+
+```diff
+- final uploader = FlutterResumableUploads.builder()
+-     .file(file)
+-     .signedUrl(url)
+-     .onProgress((p) => ...)
+-     .build();
+- // upload was fire-and-forget; this returned immediately
+- await uploader.uploadVideo();
++ final uploader = FlutterResumableUploads.builder()
++     .file(file)
++     .signedUrl(url)
++     .onProgress((p) => ...)
++     .onUrlRefresh(() => myBackend.mintSignedUrl())  // optional
++     .observeAppLifecycle()                          // optional
++     .build();
++ try {
++   // now actually awaits completion
++   await uploader.uploadVideo();
++ } on UploadError catch (e) {
++   // permanent failure / abort / exhausted retries
++ }
+```
+
+- If your code relied on the static `VideoUploadProgress.emitProgress(...)`
+  / `VideoUploadProgress.setupCallbacks(...)` access path, switch to
+  per-instance methods on `FlutterResumableUploads` (or use the new
+  `progressStream` / `errorStream`).
+
 ## 1.0.1
 
 ### 🔗 Documentation & Homepage URL Update

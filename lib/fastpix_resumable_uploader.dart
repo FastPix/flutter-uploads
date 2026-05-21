@@ -13,7 +13,8 @@ export 'src/models/progress_model.dart' show ProgressModel;
 export 'src/models/video_upload_state_model.dart' show VideoUploadState;
 
 // Network components
-export 'src/network/video_upload_network.dart' show VideoUploadNetwork;
+export 'src/network/video_upload_network.dart'
+    show VideoUploadNetwork, ChunkUploadResult, ChunkUploadOutcome;
 export 'src/network/video_upload_progress.dart'
     show VideoUploadProgress, UploadStatus;
 export 'src/network/video_upload_retry.dart' show VideoUploadRetry;
@@ -26,4 +27,9 @@ export 'src/utils/video_upload_validator.dart' show VideoUploadValidator;
 
 // Type definitions
 export 'src/core/video_upload_builder.dart'
-    show UploadProgressCallback, ErrorCallback, PauseCallback, AbortCallback;
+    show
+        UploadProgressCallback,
+        ErrorCallback,
+        PauseCallback,
+        AbortCallback,
+        SignedUrlRefreshCallback;
