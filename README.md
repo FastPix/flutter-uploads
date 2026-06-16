@@ -68,10 +68,10 @@ The SDK provides detailed logging of chunk retry statistics:
 
 To get started with SDK, you will need a signed URL.
 To make API requests, you'll need a valid Access Token and Secret Key. See
-the [Basic Authentication](https://docs.fastpix.com/docs/basic-authentication)
+the [Basic Authentication](https://fastpix.com/docs/getting-started/activate-your-account#create-an-access-token)
 Guide for details on retrieving these credentials.
 
-Once you have your credentials, use the [Upload media from device](https://docs.fastpix.com/reference/direct-upload-video-media) API to generate a signed URL for uploading media.
+Once you have your credentials, use the [Upload media from device](https://fastpix.com/docs/getting-started/upload-and-play-your-first-video) API to generate a signed URL for uploading media.
 
 ### What is a Signed URL?
 
