@@ -1,10 +1,45 @@
-# Flutter Resumable Uploads SDK
+# FastPix Flutter Video Upload SDK - resumable, chunked uploads for large videos
 
-A robust Flutter package for uploading large video and audio files with advanced features like
-chunked uploads, pause/resume functionality, network resilience, comprehensive progress tracking,
-and detailed logging. Built for reliability and user experience.
+[![Pub Version](https://img.shields.io/pub/v/fp_resumable_uploads)](https://pub.dev/packages/fp_resumable_uploads)
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS-0CB16D)](https://pub.dev/packages/fp_resumable_uploads)
+[![License: MIT](https://img.shields.io/github/license/FastPix/flutter-uploads)](./LICENSE)
 
-## 🚀 Features
+The **FastPix Flutter video upload SDK** uploads large video and audio files from a Flutter app with **resumable, chunked uploads**. It splits a file into configurable chunks, streams them to cloud storage through a signed URL, and resumes from where it left off after a network drop - with per-chunk retries, network monitoring and real-time progress. It is built for resumable chunked file transfers on weak mobile connections.
+
+Reach for it when you need reliable large-video uploads in Flutter without hand-rolling chunking, offset tracking and retry logic, and without adopting the full tus protocol yourself. It uploads to any signed-URL endpoint - FastPix, AWS S3, Google Cloud Storage or Azure Blob Storage.
+
+**Works with:** Flutter (Android and iOS) · large video and audio files · signed-URL endpoints (FastPix, AWS S3, GCS, Azure) · pause / resume / abort
+
+[Documentation](https://fastpix.com/docs/upload-videos/set-up-resumable-uploads-for-flutter) · [Create a free account](https://dashboard.fastpix.com/signup?utm_source=github&utm_medium=referral&utm_campaign=github_signup)
+
+## Start here
+
+New to the SDK? Work through these in order:
+
+1. [Before you start](#before-you-start) - create an account and understand signed URLs
+2. [Install the SDK](#installation)
+3. [Get a signed upload URL](#prerequisites)
+4. [Upload your first video (basic)](#basic-usage-with-builder-pattern)
+5. [Advanced configuration (chunk size, retries, logging)](#advanced-configuration-with-custom-logging)
+6. [Run the example app](#example-app)
+7. [Logging and debugging](#logging-system)
+8. [API reference](#api-reference)
+9. [FAQ](#faq)
+
+## Why FastPix
+
+- **Resumable by chunk.** Large files are split into chunks with per-chunk retry tracking, so one flaky chunk never stalls the rest and an interrupted upload resumes instead of restarting.
+- **Built for weak mobile networks.** Network monitoring, automatic retries and configurable delays keep uploads alive across connectivity drops.
+- **Real-time control.** Progress callbacks plus pause, resume and abort - everything you need to drive an upload UI.
+- **Any signed-URL backend.** Upload straight to FastPix, AWS S3, Google Cloud Storage or Azure Blob Storage; your storage credentials never ship in the app.
+
+## Who it's for
+
+- **UGC and social apps:** reliable user video uploads from the phone, even on spotty connections.
+- **Creator and OTT apps:** ingest large source videos with resumable, chunked transfers.
+- **Any Flutter app uploading large media:** add pause/resume, retries and progress without building an upload engine yourself.
+
+## Features
 
 ### Core Functionality
 
@@ -64,7 +99,29 @@ The SDK provides detailed logging of chunk retry statistics:
 [SDK] DEBUG:     Chunk 7: 1/3 attempts (RETRYING)
 ```
 
-## 📋 Prerequisites
+## Before you start
+
+This SDK uploads to a signed URL, so you need a FastPix account (or any backend that can generate signed upload URLs) and a video or audio file to upload.
+
+- **Create a free account** and sign in to the [FastPix Dashboard](https://dashboard.fastpix.com/signup?utm_source=github&utm_medium=referral&utm_campaign=github_signup).
+- **Get your API credentials** (Access Token + Secret Key) - see [create an access token](https://fastpix.com/docs/getting-started/activate-your-account#create-an-access-token).
+- **Understand signed URLs** - the SDK never holds your storage credentials; it uploads to a pre-authenticated URL your backend mints. See [Prerequisites](#prerequisites) below for how to generate one.
+
+## Installation
+
+Add the package with Flutter's CLI:
+
+```bash
+flutter pub add fp_resumable_uploads
+```
+
+Then import it where you upload:
+
+```dart
+import 'package:fp_resumable_uploads/fp_resumable_uploads.dart';
+```
+
+## Prerequisites
 
 To get started with SDK, you will need a signed URL.
 To make API requests, you'll need a valid Access Token and Secret Key. See
@@ -183,7 +240,7 @@ class UploadService {
 }
 ```
 
-## 📱 Example App
+## Example App
 
 A complete, runnable example app for **Android** and **iOS** lives in
 [`example/`](example/). It picks a video from the device gallery, mints a signed
@@ -199,7 +256,7 @@ flutter run            # pick an Android or iOS device
 See [`example/README.md`](example/README.md) for credentials setup and a
 file-by-file tour.
 
-## 📖 Usage
+## Usage
 
 ### Basic Usage with Builder Pattern
 
@@ -285,7 +342,7 @@ void advancedUploadExample() async {
 }
 ```
 
-## 🔍 Logging System
+## Logging System
 
 The SDK includes a comprehensive logging system that helps developers debug upload issues and
 monitor upload performance.
@@ -459,7 +516,7 @@ When logging is enabled, you'll see output like this:
 4. **Custom Tags**: Use meaningful tags to identify different upload sessions
 5. **Error Handling**: Always check logs when uploads fail for detailed error information
 
-## 🏗️ API Reference
+## API Reference
 
 ### FlutterResumableUploadsBuilder
 
@@ -551,7 +608,7 @@ Error model with detailed error information:
 | `code`    | int    | Error code (100-500)         |
 | `message` | String | Human-readable error message |
 
-## 🎯 Benefits
+## Benefits
 
 ### 1. **Reliability**
 
@@ -570,7 +627,7 @@ Error model with detailed error information:
 ### 3. **Developer Experience**
 
 - **Builder Pattern**: Clean, fluent API for easy configuration
-- **Type Safety**: Full TypeScript support with proper type definitions
+- **Type Safety**: Full Dart support with proper type definitions
 - **Comprehensive Callbacks**: Detailed progress and error callbacks
 - **Easy Integration**: Simple setup with minimal configuration required
 
@@ -588,17 +645,55 @@ Error model with detailed error information:
 - **Web Support**: Web-compatible implementation
 - **Consistent API**: Same API across all platforms
 
-## 📱 Platform Support
+## Platform Support
 
 - ✅ iOS 12.0+
 - ✅ Android API 21+
 - ✅ Flutter 1.17.0+
 
-## 📄 License
+## Which FastPix SDK for Flutter
+
+This repository is the **uploads** SDK. For the other parts of a FastPix Flutter app, use the matching SDK:
+
+| What you want to do | FastPix SDK |
+| --- | --- |
+| Upload video from a Flutter app | **fp_resumable_uploads** (this repository) |
+| Play FastPix HLS video in Flutter | [FastPix/Flutter-Video-Player](https://github.com/FastPix/Flutter-Video-Player) |
+| Add QoE analytics to a BetterPlayer video | [FastPix/flutter-data-better-player](https://github.com/FastPix/flutter-data-better-player) |
+| Core Flutter video analytics | [FastPix/flutter-core-data-sdk](https://github.com/FastPix/flutter-core-data-sdk) |
+
+## FAQ
+
+**How do I upload a large video in Flutter?**
+Generate a signed upload URL from your backend, then configure `FlutterResumableUploads.builder().file(...).signedUrl(...).build()` and call `uploadVideo()`. The SDK splits the file into chunks and uploads them. See [Upload your first video](#basic-usage-with-builder-pattern).
+
+**How do I resume an upload after a network drop?**
+The SDK tracks retries per chunk and resumes from where it left off. You can also `pauseUpload()` and `resumeUpload()` manually. See [Advanced configuration](#advanced-configuration-with-custom-logging).
+
+**Does it work with AWS S3, Google Cloud Storage or Azure?**
+Yes. It uploads to any pre-authenticated signed URL, so it works with FastPix, AWS S3, Google Cloud Storage and Azure Blob Storage. Your storage credentials never ship in the app.
+
+**Is this the tus protocol?**
+No. It is a signed-URL, chunked resumable uploader - an alternative to the tus protocol for backends that mint signed URLs (for example AWS S3 multipart with byte ranges). Reach for tus instead if you run a tus-compatible server.
+
+**How do I show upload progress, pause and resume?**
+Use the `onProgress` callback for live percentage and chunk info, and `pauseUpload()` / `resumeUpload()` / `abortUpload()` to drive your UI. See [Upload your first video](#basic-usage-with-builder-pattern).
+
+**What chunk size and file size can I use?**
+Chunk size is configurable (`chunkSize`, default 16MB) and you can cap uploads with `maxFileSize`. Tune chunk size for the network - smaller chunks for weak connections. See [API reference](#api-reference).
+
+**Which platforms are supported?**
+Android and iOS.
+
+## Documentation
+
+ [Set up resumable uploads for Flutter - FastPix docs](https://fastpix.com/docs/upload-videos/set-up-resumable-uploads-for-flutter) for the full setup guide, and [upload and play your first video](https://fastpix.com/docs/getting-started/upload-and-play-your-first-video) for generating a signed URL.
+
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🆘 Support
+## Support
 
 If you encounter any issues or have questions:
 
@@ -606,6 +701,6 @@ If you encounter any issues or have questions:
 2. Create a new issue with detailed information
 3. Include your Flutter version, platform, and error logs
 
-## 🔄 Changelog
+## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for a complete list of changes and version history.
